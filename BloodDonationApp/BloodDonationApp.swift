@@ -1,25 +1,26 @@
 // File: BloodDonationApp.swift
 // Purpose: Serve as the main entry point for the Blood Donation App, initializing Firebase and setting up the root view
 
-// Import SwiftUI for building the app's user interface
-import SwiftUI
 // Import FirebaseCore for initializing Firebase services
 import FirebaseCore
-// Import FirebaseAppCheck for configuring Firebase App Check (security feature)
-import FirebaseAppCheck
+// Import SwiftUI for building the app's user interface
+import SwiftUI
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication
+            .LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        FirebaseApp.configure()
+        return true
+    }
+}
 
 // Define BloodDonationApp as the main app structure, conforming to the App protocol
 @main
 struct BloodDonationApp: App {
-    // Initialize the app and configure Firebase
-    init() {
-        // Configure Firebase with default settings
-        FirebaseApp.configure()
-        // Disable Firebase App Check for development purposes to simplify testing
-        AppCheck.setAppCheckProviderFactory(nil)
-        // Log whether Firebase was successfully configured
-        print("Firebase configured: \(FirebaseApp.app() != nil)")
-    }
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     // Define the main scene of the app
     var body: some Scene {
@@ -32,103 +33,6 @@ struct BloodDonationApp: App {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /*// BloodDonationApp.swift
 import SwiftUI
@@ -150,30 +54,6 @@ struct BloodDonationApp: App {
         }
     }
 }*/
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /*//
 //  BloodDonationApp.swift
