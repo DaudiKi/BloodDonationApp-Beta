@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		E74BA6A52DBFB3E800A4511C /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = E74BA6A42DBFB3E800A4511C /* GoogleService-Info.plist */; };
 		E757F28E2E33CB50004679EC /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = E757F28D2E33CB50004679EC /* FirebaseAuth */; };
 		E757F2902E33CB50004679EC /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E757F28F2E33CB50004679EC /* FirebaseCore */; };
 		E757F2922E33CB50004679EC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = E757F2912E33CB50004679EC /* FirebaseFirestore */; };
@@ -16,7 +15,6 @@
 
 /* Begin PBXFileReference section */
 		E74BA6572DBF8E8B00A4511C /* BloodDonationApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BloodDonationApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		E74BA6A42DBFB3E800A4511C /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -47,7 +45,6 @@
 			children = (
 				E74BA6592DBF8E8B00A4511C /* BloodDonationApp */,
 				E74BA6582DBF8E8B00A4511C /* Products */,
-				E74BA6A42DBFB3E800A4511C /* GoogleService-Info.plist */,
 			);
 			sourceTree = "<group>";
 		};
@@ -130,7 +127,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E74BA6A52DBFB3E800A4511C /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
