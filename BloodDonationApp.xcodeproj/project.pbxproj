@@ -11,6 +11,8 @@
 		E757F2902E33CB50004679EC /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = E757F28F2E33CB50004679EC /* FirebaseCore */; };
 		E757F2922E33CB50004679EC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = E757F2912E33CB50004679EC /* FirebaseFirestore */; };
 		E757F2942E33CB88004679EC /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = E757F2932E33CB88004679EC /* FirebaseFunctions */; };
+		E7801E352E3CA89100B590BA /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = E7801E342E3CA89100B590BA /* GoogleSignIn */; };
+		E7801E372E3CA89100B590BA /* GoogleSignInSwift in Frameworks */ = {isa = PBXBuildFile; productRef = E7801E362E3CA89100B590BA /* GoogleSignInSwift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,8 +32,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E7801E352E3CA89100B590BA /* GoogleSignIn in Frameworks */,
 				E757F2902E33CB50004679EC /* FirebaseCore in Frameworks */,
 				E757F28E2E33CB50004679EC /* FirebaseAuth in Frameworks */,
+				E7801E372E3CA89100B590BA /* GoogleSignInSwift in Frameworks */,
 				E757F2922E33CB50004679EC /* FirebaseFirestore in Frameworks */,
 				E757F2942E33CB88004679EC /* FirebaseFunctions in Frameworks */,
 			);
@@ -80,6 +84,8 @@
 				E757F28F2E33CB50004679EC /* FirebaseCore */,
 				E757F2912E33CB50004679EC /* FirebaseFirestore */,
 				E757F2932E33CB88004679EC /* FirebaseFunctions */,
+				E7801E342E3CA89100B590BA /* GoogleSignIn */,
+				E7801E362E3CA89100B590BA /* GoogleSignInSwift */,
 			);
 			productName = BloodDonationApp;
 			productReference = E74BA6572DBF8E8B00A4511C /* BloodDonationApp.app */;
@@ -111,6 +117,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				E757F28C2E33CB50004679EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				E7801E332E3CA89100B590BA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E74BA6582DBF8E8B00A4511C /* Products */;
@@ -273,6 +280,7 @@
 				DEVELOPMENT_TEAM = YLNY2TSQ6D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BloodDonationApp/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -303,6 +311,7 @@
 				DEVELOPMENT_TEAM = YLNY2TSQ6D;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BloodDonationApp/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -354,6 +363,14 @@
 				minimumVersion = 12.0.0;
 			};
 		};
+		E7801E332E3CA89100B590BA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS/";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -376,6 +393,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E757F28C2E33CB50004679EC /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFunctions;
+		};
+		E7801E342E3CA89100B590BA /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E7801E332E3CA89100B590BA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+		E7801E362E3CA89100B590BA /* GoogleSignInSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E7801E332E3CA89100B590BA /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignInSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
