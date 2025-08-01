@@ -3,52 +3,42 @@
 // Purpose: Provide a user interface for signing in or signing up to the Blood Donation App
 // Created by Student1 on 28/04/2025
 
-// Import SwiftUI for building the user interface
 import SwiftUI
+import GoogleSignIn
+import GoogleSignInSwift
 
-// Define ContentView, a SwiftUI View that serves as the primary interface for user authentication
 struct ContentView: View {
-    // Access the shared AuthManager to handle authentication operations
     @EnvironmentObject var authManager: AuthManager
-    // Store the email input entered by the user
     @State private var email = ""
-    // Store the password input entered by the user
     @State private var password = ""
-    // Store the name input entered by the user (used in sign-up mode)
     @State private var name = ""
-    // Store the selected role for sign-up (defaults to "donor")
-    @State private var role = "donor"
-    // Store any error message to display to the user
     @State private var errorMessage = ""
-    // Track whether the view is in sign-up mode (true) or sign-in mode (false)
     @State private var isSignUpMode = false
+    @State private var isGoogleSignIn = false // Track if Google Sign-In is in progress
+    @State private var isGoogleButtonPressed = false // For tap animation
     
-    // Define custom colors for consistent UI styling
     private let deepRed = Color(red: 0.7, green: 0.1, blue: 0.1)
     private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
-    // Define available roles for user selection during sign-up
-    private let roles = ["donor", "admin"]
     
-    // Define the main UI structure of the view
     var body: some View {
-        // Check if a user is already authenticated
-        if authManager.user != nil {
-            // Redirect to MainView if the user is authenticated
-            MainView()
-                // Pass the authManager to MainView for authentication-related operations
-                .environmentObject(authManager)
-        } else {
-            // Display the authentication interface if no user is authenticated
-            NavigationStack {
-                // Use ZStack to layer the background color and content
+        NavigationStack {
+            if let user = authManager.user {
+                // Navigate based on user role
+                Group {
+                    if user.role == "admin" {
+                        AdminDashboardView()
+                            .environmentObject(authManager)
+                    } else {
+                        DonorDashboardView()
+                            .environmentObject(authManager)
+                    }
+                }
+            } else {
                 ZStack {
-                    // Set a cream-colored background that extends to all edges, ignoring safe areas
                     cream
                         .ignoresSafeArea()
                     
-                    // Arrange content vertically with spacing
                     VStack(spacing: 25) {
-                        // Display the app logo/icon
                         Image(systemName: "drop.fill")
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -56,54 +46,28 @@ struct ContentView: View {
                             .foregroundColor(deepRed)
                             .padding(.top, 30)
                         
-                        // Display the app title
                         Text("Blood Donation")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(deepRed)
                         
-                        // Display a subtitle for the app
                         Text("Save Lives")
                             .font(.system(size: 20, weight: .medium))
                             .foregroundColor(deepRed.opacity(0.8))
                             .padding(.bottom, 20)
                         
-                        // Create a form for user input
                         VStack(spacing: 15) {
-                            // Show name input field in sign-up mode
                             if isSignUpMode {
                                 customTextField(title: "Name", text: $name, icon: "person.fill")
                             }
                             
-                            // Show email input field
                             customTextField(title: "Email", text: $email, icon: "envelope.fill")
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                             
-                            // Show password input field
-                            customSecureField(title: "Password", text: $password, icon: "lock.fill")
-                            
-                            // Show role selection picker in sign-up mode
-                            if isSignUpMode {
-                                HStack {
-                                    // Display an icon for role selection
-                                    Image(systemName: "person.badge.shield.checkmark.fill")
-                                        .foregroundColor(deepRed)
-                                        .frame(width: 20)
-                                    
-                                    // Provide a picker for selecting user role (donor or admin)
-                                    Picker("Select Role", selection: $role) {
-                                        ForEach(roles, id: \.self) { role in
-                                            Text(role.capitalized).tag(role)
-                                        }
-                                    }
-                                    .pickerStyle(.menu)
-                                    .foregroundColor(.black)
-                                }
-                                .padding(.horizontal)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if !isGoogleSignIn { // Hide password field during Google Sign-In
+                                customSecureField(title: "Password", text: $password, icon: "lock.fill")
                             }
                             
-                            // Display any error message if present
                             if !errorMessage.isEmpty {
                                 Text(errorMessage)
                                     .foregroundColor(.red)
@@ -112,13 +76,10 @@ struct ContentView: View {
                                     .multilineTextAlignment(.center)
                             }
                             
-                            // Display the primary action button (Sign In or Create Account)
                             Button(action: {
                                 if isSignUpMode {
-                                    // Attempt to sign up if in sign-up mode
                                     validateAndSignUp()
                                 } else {
-                                    // Attempt to sign in if in sign-in mode
                                     validateAndLogin()
                                 }
                             }) {
@@ -134,12 +95,62 @@ struct ContentView: View {
                             .padding(.horizontal)
                             .padding(.top, 10)
                             
-                            // Provide a button to toggle between sign-in and sign-up modes
+                            if isSignUpMode {
+                                Button(action: {
+                                    handleGoogleSignIn()
+                                }) {
+                                    HStack {
+                                        Image(systemName: "g.circle.fill")
+                                            .foregroundColor(.white)
+                                            .font(.system(size: 20))
+                                        Text("Sign in with Google")
+                                            .font(.system(size: 16, weight: .medium))
+                                            .foregroundColor(.white)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding()
+                                    .background(
+                                        ZStack {
+                                            // Glassy background
+                                            LinearGradient(
+                                                gradient: Gradient(colors: [
+                                                    Color.white.opacity(0.3),
+                                                    Color.gray.opacity(0.2)
+                                                ]),
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                            .blur(radius: 10)
+                                            // Subtle deepRed tint
+                                            Color(deepRed).opacity(0.1)
+                                        }
+                                    )
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(deepRed.opacity(0.5), lineWidth: 1)
+                                    )
+                                    .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                                    .scaleEffect(isGoogleButtonPressed ? 0.95 : 1.0)
+                                    .animation(.easeInOut(duration: 0.2), value: isGoogleButtonPressed)
+                                }
+                                .padding(.horizontal)
+                                .frame(height: 44)
+                                .simultaneousGesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { _ in isGoogleButtonPressed = true }
+                                        .onEnded { _ in isGoogleButtonPressed = false }
+                                )
+                            }
+                            
                             Button(action: {
-                                // Toggle the mode and clear any error message with animation
                                 withAnimation {
                                     isSignUpMode.toggle()
                                     errorMessage = ""
+                                    isGoogleSignIn = false
+                                    name = ""
+                                    email = ""
+                                    password = ""
                                 }
                             }) {
                                 Text(isSignUpMode ? "Already have an account? Sign In" : "New user? Create Account")
@@ -156,7 +167,6 @@ struct ContentView: View {
                         .shadow(color: Color.black.opacity(0.1), radius: 10, x: 0, y: 5)
                         .padding(.horizontal, 20)
                         
-                        // Add spacing at the bottom
                         Spacer()
                     }
                     .padding()
@@ -165,16 +175,12 @@ struct ContentView: View {
         }
     }
     
-    // Create a reusable text field component for form inputs
     private func customTextField(title: String, text: Binding<String>, icon: String) -> some View {
-        // Display a text field with an icon and styled border
         HStack {
-            // Show an icon associated with the input field
             Image(systemName: icon)
                 .foregroundColor(deepRed)
                 .frame(width: 20)
             
-            // Provide a text field for user input
             TextField(title, text: text)
                 .foregroundColor(.black)
         }
@@ -188,16 +194,12 @@ struct ContentView: View {
         .padding(.horizontal)
     }
     
-    // Create a reusable secure field component for password input
     private func customSecureField(title: String, text: Binding<String>, icon: String) -> some View {
-        // Display a secure field for password input with an icon and styled border
         HStack {
-            // Show an icon associated with the password field
             Image(systemName: icon)
                 .foregroundColor(deepRed)
                 .frame(width: 20)
             
-            // Provide a secure field for password input to hide text
             SecureField(title, text: text)
                 .foregroundColor(.black)
         }
@@ -211,58 +213,111 @@ struct ContentView: View {
         .padding(.horizontal)
     }
     
-    // Validate the form inputs based on the current mode
     private var isFormValid: Bool {
         if isSignUpMode {
-            // Ensure name, email, password, and role are valid for sign-up
-            return !name.isEmpty && !email.isEmpty && email.contains("@") && password.count >= 6 && roles.contains(role)
+            if isGoogleSignIn {
+                return !name.isEmpty && !email.isEmpty && email.contains("@")
+            } else {
+                return !name.isEmpty && !email.isEmpty && email.contains("@") && password.count >= 6
+            }
         } else {
-            // Ensure email and password are valid for sign-in
             return !email.isEmpty && email.contains("@") && password.count >= 6
         }
     }
     
-    // Handle validation and login process
     private func validateAndLogin() {
-        // Check if the form inputs are valid
         guard isFormValid else {
             errorMessage = "Please enter a valid email and a password with at least 6 characters."
             return
         }
         
-        // Call the AuthManager to sign in the user
         authManager.signIn(email: email, password: password) { error in
             if let error = error {
-                // Display any error message returned from the sign-in attempt
                 errorMessage = error.localizedDescription
             }
         }
     }
     
-    // Handle validation and sign-up process
     private func validateAndSignUp() {
-        // Check if the form inputs are valid
         guard isFormValid else {
-            errorMessage = "Please fill all fields correctly. Ensure name is not empty, email is valid, password is at least 6 characters, and a valid role is selected."
+            errorMessage = "Please fill all fields correctly. Ensure name is not empty, email is valid, and password is at least 6 characters."
             return
         }
         
-        // Call the AuthManager to sign up the user
-        authManager.signUp(email: email, password: password, name: name, role: role) { error in
+        authManager.signUp(email: email, password: password, name: name, role: "donor") { error in
             if let error = error {
-                // Display any error message returned from the sign-up attempt
                 errorMessage = error.localizedDescription
+            }
+        }
+    }
+    
+    private func handleGoogleSignIn() {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            errorMessage = "Unable to initiate Google Sign-In."
+            return
+        }
+        
+        // Set Google Sign-In state
+        isGoogleSignIn = true
+        
+        // Perform Google Sign-In with additional scopes
+        GIDSignIn.sharedInstance.signIn(withPresenting: rootViewController, hint: nil, additionalScopes: ["email", "profile"]) { signInResult, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self.errorMessage = error.localizedDescription
+                    self.isGoogleSignIn = false
+                    return
+                }
+                
+                guard let signInResult = signInResult else {
+                    self.errorMessage = "Google Sign-In failed."
+                    self.isGoogleSignIn = false
+                    return
+                }
+                
+                let user = signInResult.user
+                // Debug the type and value of user.accessToken
+                print("DEBUG: user.accessToken type: \(type(of: user.accessToken))")
+                print("DEBUG: user.accessToken value: \(user.accessToken)")
+                
+                // Use user.accessToken.tokenString directly, as it's non-optional
+                let accessToken = user.accessToken.tokenString
+                guard let idToken = user.idToken?.tokenString,
+                      let email = user.profile?.email,
+                      let name = user.profile?.name else {
+                    self.errorMessage = "Failed to retrieve Google account details."
+                    self.isGoogleSignIn = false
+                    return
+                }
+                
+                // Populate form fields with Google data
+                self.name = name
+                self.email = email
+                
+                // Directly create account using Google Sign-In data
+                self.authManager.signInWithGoogle(idToken: idToken, accessToken: accessToken, email: email, name: name) { error in
+                    if let error = error {
+                        self.errorMessage = error.localizedDescription
+                    }
+                    self.isGoogleSignIn = false
+                }
             }
         }
     }
 }
 
-// Provide a preview of the ContentView for SwiftUI's canvas
 #Preview {
     ContentView()
-        // Provide a mock AuthManager for preview purposes
         .environmentObject(AuthManager())
 }
+
+
+
+
+
+
+
 
 
 
