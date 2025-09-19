@@ -1,4 +1,978 @@
-// Import SwiftUI framework for creating the user interface and FirebaseFirestore for interacting with the Firestore database
+import SwiftUI
+import FirebaseFirestore
+
+struct DonationFormView: View {
+    @ObservedObject var authManager: AuthManager
+    @Environment(\.dismiss) var dismiss
+    let users: [AppUser]
+    let hospitals: [hospital]
+    
+    @State private var selectedDonor: AppUser?
+    @State private var selectedHospital: hospital?
+    @State private var customHospital: String = ""
+    @State private var bloodType: String = ""
+    @State private var date: Date = Date()
+    @State private var showAlert: Bool = false
+    @State private var alertMessage: String = ""
+    @State private var showLoading: Bool = false
+    @State private var donationLimitReached: Bool = false
+    @State private var remainingTimeMessage: String = ""
+    
+    private let db = Firestore.firestore()
+    private let deepRed = Color(red: 0.7, green: 0.1, blue: 0.1)
+    private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
+    private let validBloodTypes = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                cream.ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "drop.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.white)
+                        
+                        Text("Log Donation")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Record a blood donation for a donor")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 25)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [deepRed, deepRed.opacity(0.8)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    
+                    if showLoading {
+                        Spacer()
+                        ProgressView("Submitting donation...")
+                            .padding()
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 20) {
+                                if donationLimitReached {
+                                    Text(remainingTimeMessage)
+                                        .font(.subheadline)
+                                        .foregroundColor(.red)
+                                        .multilineTextAlignment(.center)
+                                        .padding()
+                                        .background(Color.white)
+                                        .cornerRadius(10)
+                                        .padding(.horizontal)
+                                }
+                                
+                                formSection(title: "Donor", iconName: "person.fill") {
+                                    Picker("Select Donor", selection: $selectedDonor) {
+                                        Text("Select a donor").tag(Optional<AppUser>.none)
+                                        ForEach(users) { user in
+                                            Text("\(user.name) (\(user.email))").tag(Optional(user))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                    .onChange(of: selectedDonor) { newValue in
+                                        if let donor = newValue {
+                                            Task {
+                                                await checkDonationLimit(for: donor.id)
+                                            }
+                                        } else {
+                                            donationLimitReached = false
+                                            remainingTimeMessage = ""
+                                        }
+                                    }
+                                }
+                                
+                                formSection(title: "Where did they donate?", iconName: "building.2") {
+                                    Picker("Select Hospital", selection: $selectedHospital) {
+                                        Text("Select a hospital").tag(Optional<hospital>.none)
+                                        ForEach(hospitals) { hospital in
+                                            Text(hospital.name).tag(Optional(hospital))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 5)
+                                    
+                                    HStack {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundColor(deepRed)
+                                        TextField("Or enter a hospital name", text: $customHospital)
+                                            .padding()
+                                            .background(Color.white)
+                                            .cornerRadius(10)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(deepRed.opacity(0.3), lineWidth: 1)
+                                            )
+                                            .onChange(of: customHospital) { newValue in
+                                                if !newValue.isEmpty {
+                                                    selectedHospital = nil
+                                                }
+                                            }
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "What's their blood type?", iconName: "drop.fill") {
+                                    Picker("Blood Type", selection: $bloodType) {
+                                        Text("Select Blood Type").tag("")
+                                        ForEach(validBloodTypes, id: \.self) { type in
+                                            Text(type).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "When did they donate?", iconName: "calendar") {
+                                    DatePicker("Donation Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                                        .datePickerStyle(.compact)
+                                        .tint(deepRed)
+                                        .padding(.horizontal)
+                                        .padding(.bottom, 10)
+                                }
+                                
+                                Button(action: {
+                                    Task {
+                                        await submitDonation()
+                                    }
+                                }) {
+                                    Text("Submit Donation")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .background(isFormValid && !donationLimitReached ? deepRed : deepRed.opacity(0.4))
+                                        .cornerRadius(12)
+                                        .padding(.horizontal)
+                                }
+                                .disabled(!isFormValid || donationLimitReached)
+                                .padding(.vertical)
+                            }
+                            .padding(.vertical)
+                        }
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(deepRed)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            await submitDonation()
+                        }
+                    }
+                    .foregroundColor(deepRed)
+                    .disabled(!isFormValid || donationLimitReached)
+                }
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text("Message"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
+        }
+    }
+    
+    private func formSection<Content: View>(title: String, iconName: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: iconName)
+                    .foregroundColor(deepRed)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(deepRed)
+            }
+            .padding(.horizontal)
+            content()
+        }
+        .padding(.vertical, 10)
+        .background(Color.white)
+        .cornerRadius(15)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        .padding(.horizontal)
+    }
+    
+    private var isFormValid: Bool {
+        selectedDonor != nil &&
+        (!customHospital.isEmpty || selectedHospital != nil) &&
+        !bloodType.isEmpty &&
+        validBloodTypes.contains(bloodType) &&
+        date <= Date()
+    }
+    
+    private func checkDonationLimit(for userId: String) async {
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: Date())
+        guard let startOfYear = calendar.date(from: DateComponents(year: currentYear, month: 1, day: 1)),
+              let endOfYear = calendar.date(from: DateComponents(year: currentYear, month: 12, day: 31, hour: 23, minute: 59, second: 59)),
+              let nextYearStart = calendar.date(from: DateComponents(year: currentYear + 1, month: 1, day: 1)) else {
+            print("Failed to calculate year range for \(currentYear)")
+            alertMessage = "Error checking donation limit. Please try again later."
+            showAlert = true
+            donationLimitReached = true
+            return
+        }
+        
+        do {
+            let snapshot = try await db.collection("donations")
+                .whereField("donorId", isEqualTo: userId)
+                .whereField("date", isGreaterThanOrEqualTo: Timestamp(date: startOfYear))
+                .whereField("date", isLessThanOrEqualTo: Timestamp(date: endOfYear))
+                .whereFilter(Filter.orFilter([
+                    Filter.whereField("status", isEqualTo: "approved"),
+                    Filter.whereField("status", isEqualTo: "used")
+                ]))
+                .getDocuments()
+            
+            let approvedCount = snapshot.documents.count
+            donationLimitReached = approvedCount >= 4
+            
+            if donationLimitReached {
+                let components = calendar.dateComponents([.month, .day, .hour, .minute], from: Date(), to: nextYearStart)
+                let months = components.month ?? 0
+                let days = components.day ?? 0
+                let hours = components.hour ?? 0
+                let minutes = components.minute ?? 0
+                
+                var timeComponents: [String] = []
+                if months > 0 { timeComponents.append("\(months) month\(months == 1 ? "" : "s")") }
+                if days > 0 { timeComponents.append("\(days) day\(days == 1 ? "" : "s")") }
+                if hours > 0 { timeComponents.append("\(hours) hour\(hours == 1 ? "" : "s")") }
+                if minutes > 0 { timeComponents.append("\(minutes) minute\(minutes == 1 ? "" : "s")") }
+                
+                let timeRemaining = timeComponents.isEmpty ? "less than a minute" : timeComponents.joined(separator: ", ")
+                remainingTimeMessage = "\(selectedDonor?.name ?? "User") has donated 4 times in \(currentYear). They can donate again in \(timeRemaining) on January 1st, \(currentYear + 1)."
+            } else {
+                remainingTimeMessage = ""
+            }
+            
+            print("Checked donation limit: \(approvedCount) approved donations in \(currentYear), limit reached: \(donationLimitReached)")
+        } catch {
+            print("Error checking donation limit: \(error.localizedDescription)")
+            alertMessage = "Failed to check donation limit: \(error.localizedDescription)"
+            showAlert = true
+            donationLimitReached = true
+        }
+    }
+    
+    private func submitDonation() async {
+        guard let donor = selectedDonor else {
+            alertMessage = "Please select a donor."
+            showAlert = true
+            return
+        }
+        
+        guard !customHospital.isEmpty || selectedHospital != nil else {
+            alertMessage = "Please select a hospital or enter a hospital name."
+            showAlert = true
+            return
+        }
+        
+        if donationLimitReached {
+            alertMessage = remainingTimeMessage
+            showAlert = true
+            return
+        }
+        
+        showLoading = true
+        
+        do {
+            let hospitalName = customHospital.isEmpty ? selectedHospital!.name : customHospital
+            let donation = Donation(
+                id: UUID().uuidString,
+                donorId: donor.id,
+                hospital: hospitalName,
+                bloodType: bloodType,
+                date: date,
+                status: "pending"
+            )
+            
+            let donationData: [String: Any] = [
+                "id": donation.id,
+                "donorId": donation.donorId,
+                "hospital": donation.hospital,
+                "bloodType": donation.bloodType,
+                "date": Timestamp(date: donation.date),
+                "status": donation.status
+            ]
+            
+            print("Submitting donation for donor \(donor.id): \(donationData)")
+            try await db.collection("donations").document(donation.id).setData(donationData)
+            
+            alertMessage = "Donation submitted successfully for \(donor.name)."
+            showAlert = true
+            showLoading = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                dismiss()
+            }
+        } catch {
+            print("Failed to submit donation: \(error.localizedDescription)")
+            alertMessage = "Failed to submit donation: \(error.localizedDescription)"
+            showAlert = true
+            showLoading = false
+        }
+    }
+}
+
+#Preview {
+    DonationFormView(
+        authManager: AuthManager(),
+        users: [
+            AppUser(id: "1", email: "donor1@example.com", name: "Donor One", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false),
+            AppUser(id: "2", email: "donor2@example.com", name: "Donor Two", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false)
+        ],
+        hospitals: [
+            hospital(id: "h1", name: "City Hospital", address: "123 Main St"),
+            hospital(id: "h2", name: "General Hospital", address: "456 Oak Ave")
+        ]
+    )
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*import SwiftUI
+import FirebaseFirestore
+
+struct DonationFormView: View {
+    @ObservedObject var authManager: AuthManager
+    @Environment(\.dismiss) var dismiss
+    let users: [AppUser]
+    let hospitals: [hospital]
+    
+    @State private var selectedDonor: AppUser?
+    @State private var selectedHospital: hospital?
+    @State private var customHospital: String = ""
+    @State private var bloodType: String = ""
+    @State private var date: Date = Date()
+    @State private var showAlert: Bool = false
+    @State private var alertMessage: String = ""
+    @State private var showLoading: Bool = false
+    
+    private let db = Firestore.firestore()
+    private let deepRed = Color(red: 0.7, green: 0.1, blue: 0.1)
+    private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
+    private let validBloodTypes = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                cream.ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "drop.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.white)
+                        
+                        Text("Log Donation")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Record a blood donation for a donor")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 25)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [deepRed, deepRed.opacity(0.8)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    
+                    if showLoading {
+                        Spacer()
+                        ProgressView("Submitting donation...")
+                            .padding()
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 20) {
+                                formSection(title: "Donor", iconName: "person.fill") {
+                                    Picker("Select Donor", selection: $selectedDonor) {
+                                        Text("Select a donor").tag(Optional<AppUser>.none)
+                                        ForEach(users) { user in
+                                            Text("\(user.name) (\(user.email))").tag(Optional(user))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "Where did they donate?", iconName: "building.2") {
+                                    Picker("Select Hospital", selection: $selectedHospital) {
+                                        Text("Select a hospital").tag(Optional<hospital>.none)
+                                        ForEach(hospitals) { hospital in
+                                            Text(hospital.name).tag(Optional(hospital))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 5)
+                                    
+                                    HStack {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundColor(deepRed)
+                                        TextField("Or enter a hospital name", text: $customHospital)
+                                            .padding()
+                                            .background(Color.white)
+                                            .cornerRadius(10)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(deepRed.opacity(0.3), lineWidth: 1)
+                                            )
+                                            .onChange(of: customHospital) { newValue in
+                                                if !newValue.isEmpty {
+                                                    selectedHospital = nil
+                                                }
+                                            }
+                                    }
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "What's their blood type?", iconName: "drop.fill") {
+                                    Picker("Blood Type", selection: $bloodType) {
+                                        Text("Select Blood Type").tag("")
+                                        ForEach(validBloodTypes, id: \.self) { type in
+                                            Text(type).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "When did they donate?", iconName: "calendar") {
+                                    DatePicker("Donation Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                                        .datePickerStyle(.compact)
+                                        .tint(deepRed)
+                                        .padding(.horizontal)
+                                        .padding(.bottom, 10)
+                                }
+                                
+                                Button(action: {
+                                    Task {
+                                        await submitDonation()
+                                    }
+                                }) {
+                                    Text("Submit Donation")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .background(isFormValid ? deepRed : deepRed.opacity(0.4))
+                                        .cornerRadius(12)
+                                        .padding(.horizontal)
+                                }
+                                .disabled(!isFormValid)
+                                .padding(.vertical)
+                            }
+                            .padding(.vertical)
+                        }
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(deepRed)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            await submitDonation()
+                        }
+                    }
+                    .foregroundColor(deepRed)
+                    .disabled(!isFormValid)
+                }
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text("Message"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
+        }
+    }
+    
+    private func formSection<Content: View>(title: String, iconName: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: iconName)
+                    .foregroundColor(deepRed)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(deepRed)
+            }
+            .padding(.horizontal)
+            content()
+        }
+        .padding(.vertical, 10)
+        .background(Color.white)
+        .cornerRadius(15)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        .padding(.horizontal)
+    }
+    
+    private var isFormValid: Bool {
+        selectedDonor != nil &&
+        (!customHospital.isEmpty || selectedHospital != nil) &&
+        !bloodType.isEmpty &&
+        validBloodTypes.contains(bloodType) &&
+        date <= Date()
+    }
+    
+    private func submitDonation() async {
+        guard let donor = selectedDonor else {
+            alertMessage = "Please select a donor."
+            showAlert = true
+            return
+        }
+        
+        guard !customHospital.isEmpty || selectedHospital != nil else {
+            alertMessage = "Please select a hospital or enter a hospital name."
+            showAlert = true
+            return
+        }
+        
+        showLoading = true
+        
+        do {
+            let hospitalName = customHospital.isEmpty ? selectedHospital!.name : customHospital
+            let donation = Donation(
+                id: UUID().uuidString,
+                donorId: donor.id,
+                hospital: hospitalName,
+                bloodType: bloodType,
+                date: date,
+                status: "pending"
+            )
+            
+            let donationData: [String: Any] = [
+                "id": donation.id,
+                "donorId": donation.donorId,
+                "hospital": donation.hospital,
+                "bloodType": donation.bloodType,
+                "date": Timestamp(date: donation.date),
+                "status": donation.status
+            ]
+            
+            print("Submitting donation for donor \(donor.id): \(donationData)")
+            try await db.collection("donations").document(donation.id).setData(donationData)
+            
+            alertMessage = "Donation submitted successfully for \(donor.name)."
+            showAlert = true
+            showLoading = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                dismiss()
+            }
+        } catch {
+            print("Failed to submit donation: \(error.localizedDescription)")
+            alertMessage = "Failed to submit donation: \(error.localizedDescription)"
+            showAlert = true
+            showLoading = false
+        }
+    }
+}
+
+#Preview {
+    DonationFormView(
+        authManager: AuthManager(),
+        users: [
+            AppUser(id: "1", email: "donor1@example.com", name: "Donor One", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false),
+            AppUser(id: "2", email: "donor2@example.com", name: "Donor Two", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false)
+        ],
+        hospitals: [
+            hospital(id: "h1", name: "City Hospital", address: "123 Main St"),
+            hospital(id: "h2", name: "General Hospital", address: "456 Oak Ave")
+        ]
+    )
+}*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*import SwiftUI
+import FirebaseFirestore
+
+struct DonationFormView: View {
+    @ObservedObject var authManager: AuthManager
+    @Environment(\.dismiss) var dismiss
+    let users: [AppUser]
+    let hospitals: [hospital]
+    
+    @State private var selectedDonor: AppUser?
+    @State private var selectedHospital: hospital?
+    @State private var bloodType = ""
+    @State private var date = Date()
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+    @State private var showLoading = false
+    
+    private let db = Firestore.firestore()
+    private let deepRed = Color(red: 0.7, green: 0.1, blue: 0.1)
+    private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
+    private let validBloodTypes = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                cream.ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "drop.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.white)
+                        
+                        Text("Log Donation")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                        
+                        Text("Record a blood donation for a donor")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.9))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 25)
+                    .background(
+                        LinearGradient(
+                            gradient: Gradient(colors: [deepRed, deepRed.opacity(0.8)]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    
+                    if showLoading {
+                        Spacer()
+                        ProgressView("Submitting donation...")
+                            .padding()
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 20) {
+                                formSection(title: "Donor", iconName: "person.fill") {
+                                    Picker("Select Donor", selection: $selectedDonor) {
+                                        Text("Select a donor").tag(Optional<AppUser>.none)
+                                        ForEach(users) { user in
+                                            Text("\(user.name) (\(user.email))").tag(Optional(user))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "Where did they donate?", iconName: "building.2") {
+                                    Picker("Select Hospital", selection: $selectedHospital) {
+                                        Text("Select a hospital").tag(Optional<hospital>.none)
+                                        ForEach(hospitals) { hospital in
+                                            Text(hospital.name).tag(Optional(hospital))
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "What's their blood type?", iconName: "drop.fill") {
+                                    Picker("Blood Type", selection: $bloodType) {
+                                        Text("Select Blood Type").tag("")
+                                        ForEach(validBloodTypes, id: \.self) { type in
+                                            Text(type).tag(type)
+                                        }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 10)
+                                }
+                                
+                                formSection(title: "When did they donate?", iconName: "calendar") {
+                                    DatePicker("Donation Date", selection: $date, in: ...Date(), displayedComponents: .date)
+                                        .datePickerStyle(.compact)
+                                        .tint(deepRed)
+                                        .padding(.horizontal)
+                                        .padding(.bottom, 10)
+                                }
+                                
+                                Button(action: {
+                                    Task {
+                                        await submitDonation()
+                                    }
+                                }) {
+                                    Text("Submit Donation")
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .background(isFormValid ? deepRed : deepRed.opacity(0.4))
+                                        .cornerRadius(12)
+                                        .padding(.horizontal)
+                                }
+                                .disabled(!isFormValid)
+                                .padding(.vertical)
+                            }
+                            .padding(.vertical)
+                        }
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(deepRed)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            await submitDonation()
+                        }
+                    }
+                    .foregroundColor(deepRed)
+                    .disabled(!isFormValid)
+                }
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text("Message"), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
+        }
+    }
+    
+    private func formSection<Content: View>(title: String, iconName: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: iconName)
+                    .foregroundColor(deepRed)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(deepRed)
+            }
+            .padding(.horizontal)
+            content()
+        }
+        .padding(.vertical, 10)
+        .background(Color.white)
+        .cornerRadius(15)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+        .padding(.horizontal)
+    }
+    
+    private var isFormValid: Bool {
+        selectedDonor != nil &&
+        selectedHospital != nil &&
+        !bloodType.isEmpty &&
+        validBloodTypes.contains(bloodType) &&
+        date <= Date()
+    }
+    
+    private func submitDonation() async {
+        guard let donor = selectedDonor,
+              let hospital = selectedHospital else {
+            alertMessage = "Please select a donor, hospital, and valid blood type."
+            showAlert = true
+            return
+        }
+        
+        showLoading = true
+        
+        do {
+            let donation = Donation(
+                id: UUID().uuidString,
+                donorId: donor.id,
+                hospital: hospital.name,
+                bloodType: bloodType,
+                date: date,
+                status: "pending"
+            )
+            
+            let donationData: [String: Any] = [
+                "id": donation.id,
+                "donorId": donation.donorId,
+                "hospital": donation.hospital,
+                "bloodType": donation.bloodType,
+                "date": Timestamp(date: donation.date),
+                "status": donation.status
+            ]
+            
+            print("Submitting donation for donor \(donor.id): \(donationData)")
+            try await db.collection("donations").document(donation.id).setData(donationData)
+            
+            alertMessage = "Donation submitted successfully for \(donor.name)."
+            showAlert = true
+            showLoading = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                dismiss()
+            }
+        } catch {
+            print("Failed to submit donation: \(error.localizedDescription)")
+            alertMessage = "Failed to submit donation: \(error.localizedDescription)"
+            showAlert = true
+            showLoading = false
+        }
+    }
+}
+
+#Preview {
+    DonationFormView(
+        authManager: AuthManager(),
+        users: [
+            AppUser(id: "1", email: "donor1@example.com", name: "Donor One", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false),
+            AppUser(id: "2", email: "donor2@example.com", name: "Donor Two", role: "donor", isActive: true, streaks: 0, hasNotifiedFourDonations: false)
+        ],
+        hospitals: [
+            hospital(id: "h1", name: "City Hospital", address: "123 Main St"),
+            hospital(id: "h2", name: "General Hospital", address: "456 Oak Ave")
+        ]
+    )
+}*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*// Import SwiftUI framework for creating the user interface and FirebaseFirestore for interacting with the Firestore database
 import SwiftUI
 import FirebaseFirestore
 
@@ -403,7 +1377,7 @@ struct DonationFormView: View {
 // Provide a preview of the DonationFormView for SwiftUI's canvas
 #Preview {
     DonationFormView(authManager: AuthManager())
-}
+}*/
 
 
 

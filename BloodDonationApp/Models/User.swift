@@ -7,7 +7,7 @@
 import Foundation
 
 // Define the AppUser struct to represent a user in the application
-struct AppUser: Identifiable, Codable {
+struct AppUser: Identifiable, Codable, Hashable {
     // Unique identifier for the user, used to distinguish users in the database and UI
     let id: String
     // User's email address for authentication and identification
@@ -20,6 +20,8 @@ struct AppUser: Identifiable, Codable {
     let isActive: Bool
     // Number of donation streaks, representing approved donations for tracking user activity
     let streaks: Int
+    
+    let hasNotifiedFourDonations:Bool
 }
 
 

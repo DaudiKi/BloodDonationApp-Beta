@@ -1,3 +1,302 @@
+/*// File: AuthManager.swift
+// Project: BloodDonationApp
+// Purpose: Manage user authentication and user data for the Blood Donation App
+// Created by Student1 on 28/04/2025
+
+import FirebaseAuth
+import FirebaseFirestore
+import FirebaseFunctions
+import GoogleSignIn
+import Combine
+
+class AuthManager: ObservableObject {
+    @Published var user: AppUser?
+    private let db = Firestore.firestore()
+    private let functions = Functions.functions()
+    private var cancellables = Set<AnyCancellable>()
+    
+    init() {
+        // Listen for authentication state changes
+        Auth.auth().addStateDidChangeListener { [weak self] _, firebaseUser in
+            guard let self = self else { return }
+            print("DEBUG: Auth state changed, user: \(firebaseUser?.uid ?? "nil")")
+            if let firebaseUser = firebaseUser {
+                self.fetchUserData(userId: firebaseUser.uid)
+            } else {
+                print("DEBUG: No authenticated user, setting user to nil")
+                self.user = nil
+            }
+        }
+    }
+    
+    private func fetchUserData(userId: String) {
+        // Fetch user data from Firestore
+        db.collection("users").document(userId).getDocument { [weak self] document, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                print("DEBUG: Error fetching Firestore user data: \(error.localizedDescription)")
+                // Fallback to Firebase Auth data with default values
+                let email = Auth.auth().currentUser?.email ?? ""
+                let name = Auth.auth().currentUser?.displayName ?? ""
+                self.user = AppUser(
+                    id: userId,
+                    email: email,
+                    name: name,
+                    role: "donor", // Default for new users, will be updated on sign-up
+                    isActive: true,
+                    streaks: 0,
+                    hasNotifiedFourDonations: false
+                )
+                return
+            }
+            
+            if let document = document, document.exists {
+                do {
+                    let appUser = try document.data(as: AppUser.self)
+                    print("DEBUG: Fetched user data from Firestore: \(appUser)")
+                    self.user = appUser
+                } catch {
+                    print("DEBUG: Error decoding user: \(error.localizedDescription)")
+                    // Fallback to Firebase Auth data with default values
+                    let email = Auth.auth().currentUser?.email ?? ""
+                    let name = Auth.auth().currentUser?.displayName ?? ""
+                    self.user = AppUser(
+                        id: userId,
+                        email: email,
+                        name: name,
+                        role: "donor",
+                        isActive: true,
+                        streaks: 0,
+                        hasNotifiedFourDonations: false
+                    )
+                }
+            } else {
+                print("DEBUG: User document does not exist in Firestore")
+                // Create a default user document
+                let email = Auth.auth().currentUser?.email ?? ""
+                let name = Auth.auth().currentUser?.displayName ?? ""
+                let userData = AppUser(
+                    id: userId,
+                    email: email,
+                    name: name,
+                    role: "donor",
+                    isActive: true,
+                    streaks: 0,
+                    hasNotifiedFourDonations: false
+                )
+                do {
+                    try db.collection("users").document(userId).setData(from: userData)
+                    print("DEBUG: Created default user document: \(userData)")
+                    self.user = userData
+                } catch {
+                    print("DEBUG: Error creating default user document: \(error.localizedDescription)")
+                    self.user = userData // Set user anyway to allow redirect
+                }
+            }
+        }
+    }
+    
+    func signIn(email: String, password: String, completion: @escaping (Error?) -> Void) {
+        Auth.auth().signIn(withEmail: email, password: password) { [weak self] result, error in
+            guard let self = self else {
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+                return
+            }
+            
+            if let error = error {
+                print("DEBUG: Sign-in error: \(error.localizedDescription)")
+                completion(error)
+                return
+            }
+            
+            guard let firebaseUser = result?.user else {
+                print("DEBUG: Sign-in failed: No Firebase user")
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Sign-in failed"]))
+                return
+            }
+            
+            print("DEBUG: Email sign-in successful, user: \(firebaseUser.uid)")
+            // Fetch user data to determine role (admin or donor)
+            self.fetchUserData(userId: firebaseUser.uid)
+            completion(nil)
+        }
+    }
+    
+    func signUp(email: String, password: String, name: String, role: String, completion: @escaping (Error?) -> Void) {
+        // Validate role
+        guard role == "donor" || role == "admin" else {
+            print("DEBUG: Sign-up failed: Invalid role '\(role)'")
+            completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid role. Must be 'donor' or 'admin'."]))
+            return
+        }
+        
+        Auth.auth().createUser(withEmail: email, password: password) { [weak self] result, error in
+            guard let self = self else {
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+                return
+            }
+            
+            if let error = error {
+                print("DEBUG: Sign-up error: \(error.localizedDescription)")
+                completion(error)
+                return
+            }
+            
+            guard let firebaseUser = result?.user else {
+                print("DEBUG: Sign-up failed: No Firebase user created")
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "User creation failed"]))
+                return
+            }
+            
+            // Set custom claim for role
+            functions.httpsCallable("setUserRole").call(["userId": firebaseUser.uid, "role": role]) { result, error in
+                if let error = error {
+                    print("DEBUG: Error setting user role: \(error.localizedDescription)")
+                    completion(error)
+                    return
+                }
+                
+                // Create user document in Firestore
+                let userData = AppUser(
+                    id: firebaseUser.uid,
+                    email: email,
+                    name: name,
+                    role: role,
+                    isActive: true,
+                    streaks: 0,
+                    hasNotifiedFourDonations: false
+                )
+                do {
+                    try self.db.collection("users").document(firebaseUser.uid).setData(from: userData)
+                    print("DEBUG: Created Firestore user document: \(userData)")
+                    self.user = userData // Update user to trigger redirect
+                    completion(nil)
+                } catch {
+                    print("DEBUG: Error saving user to Firestore: \(error.localizedDescription)")
+                    completion(error)
+                }
+            }
+        }
+    }
+    
+    func signInWithGoogle(idToken: String, accessToken: String, email: String, name: String, completion: @escaping (Error?) -> Void) {
+        let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+        
+        Auth.auth().signIn(with: credential) { [weak self] result, error in
+            guard let self = self else {
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+                return
+            }
+            
+            if let error = error {
+                print("DEBUG: Google Sign-In error: \(error.localizedDescription)")
+                completion(error)
+                return
+            }
+            
+            guard let firebaseUser = result?.user else {
+                print("DEBUG: Google Sign-In failed: No Firebase user")
+                completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Google Sign-In failed"]))
+                return
+            }
+            
+            // Check if user exists in Firestore
+            db.collection("users").document(firebaseUser.uid).getDocument { [weak self] snapshot, error in
+                guard let self = self else {
+                    completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+                    return
+                }
+                
+                if let error = error {
+                    print("DEBUG: Error checking user existence: \(error.localizedDescription)")
+                    completion(error)
+                    return
+                }
+                
+                if snapshot?.exists == true {
+                    // Existing user, fetch data via state change listener
+                    print("DEBUG: Existing Google user, fetching data: \(firebaseUser.uid)")
+                    self.fetchUserData(userId: firebaseUser.uid)
+                    completion(nil)
+                } else {
+                    // New user, create with donor role by default
+                    let role = "donor"
+                    functions.httpsCallable("setUserRole").call(["userId": firebaseUser.uid, "role": role]) { result, error in
+                        if let error = error {
+                            print("DEBUG: Error setting role for Google user: \(error.localizedDescription)")
+                            completion(error)
+                            return
+                        }
+                        
+                        // Create user document in Firestore
+                        let userData = AppUser(
+                            id: firebaseUser.uid,
+                            email: email,
+                            name: name,
+                            role: role,
+                            isActive: true,
+                            streaks: 0,
+                            hasNotifiedFourDonations: false
+                        )
+                        do {
+                            try self.db.collection("users").document(firebaseUser.uid).setData(from: userData)
+                            print("DEBUG: Created Google user document: \(userData)")
+                            self.user = userData // Update user to trigger redirect
+                            completion(nil)
+                        } catch {
+                            print("DEBUG: Error saving Google user to Firestore: \(error.localizedDescription)")
+                            completion(error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    func signOut() {
+        do {
+            try Auth.auth().signOut()
+            print("DEBUG: Signed out successfully")
+            self.user = nil
+        } catch {
+            print("DEBUG: Sign-out error: \(error.localizedDescription)")
+        }
+    }
+}*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // File: AuthManager.swift
 // Project: BloodDonationApp
 // Purpose: Manage user authentication and user data for the Blood Donation App
@@ -39,7 +338,7 @@ class AuthManager: ObservableObject {
                 // Fallback to Firebase Auth data
                 let email = Auth.auth().currentUser?.email ?? ""
                 let name = Auth.auth().currentUser?.displayName ?? ""
-                self.user = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0)
+                self.user = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0,hasNotifiedFourDonations: false)
                 return
             }
             
@@ -53,14 +352,14 @@ class AuthManager: ObservableObject {
                     // Fallback to Firebase Auth data with default donor role
                     let email = Auth.auth().currentUser?.email ?? ""
                     let name = Auth.auth().currentUser?.displayName ?? ""
-                    self.user = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0)
+                    self.user = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0,hasNotifiedFourDonations: false)
                 }
             } else {
                 print("DEBUG: User document does not exist in Firestore")
                 // Create a default user document
                 let email = Auth.auth().currentUser?.email ?? ""
                 let name = Auth.auth().currentUser?.displayName ?? ""
-                let userData = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0)
+                let userData = AppUser(id: userId, email: email, name: name, role: "donor", isActive: true, streaks: 0,hasNotifiedFourDonations: false)
                 do {
                     try db.collection("users").document(userId).setData(from: userData)
                     print("DEBUG: Created default user document: \(userData)")
@@ -127,7 +426,7 @@ class AuthManager: ObservableObject {
                 }
                 
                 // Create user document in Firestore
-                let userData = AppUser(id: firebaseUser.uid, email: email, name: name, role: role, isActive: true, streaks: 0)
+                let userData = AppUser(id: firebaseUser.uid, email: email, name: name, role: role, isActive: true, streaks: 0,hasNotifiedFourDonations: false)
                 do {
                     try self.db.collection("users").document(firebaseUser.uid).setData(from: userData)
                     print("DEBUG: Created Firestore user document: \(userData)")
@@ -162,26 +461,27 @@ class AuthManager: ObservableObject {
                 return
             }
             
-            // Check if user exists in Firestore
-            db.collection("users").document(firebaseUser.uid).getDocument { [weak self] snapshot, error in
+            // Check if a user with this email already exists
+            db.collection("users").whereField("email", isEqualTo: email).getDocuments { [weak self] snapshot, error in
                 guard let self = self else {
                     completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
                     return
                 }
                 
                 if let error = error {
-                    print("DEBUG: Error checking user existence: \(error.localizedDescription)")
+                    print("DEBUG: Error checking email existence: \(error.localizedDescription)")
                     completion(error)
                     return
                 }
                 
-                if snapshot?.exists == true {
-                    // Existing user, fetch data via state change listener
-                    print("DEBUG: Existing Google user, fetching data: \(firebaseUser.uid)")
+                if let snapshot = snapshot, !snapshot.isEmpty {
+                    // User exists, fetch their data
+                    print("DEBUG: Existing user with email \(email), fetching data")
+                    self.fetchUserData(userId: firebaseUser.uid)
                     completion(nil)
                 } else {
-                    // New user, create with donor role
-                    let role = "donor"
+                    // New user, create withendola
+                    let role = "donor" // Default role for new Google Sign-In users
                     functions.httpsCallable("setUserRole").call(["userId": firebaseUser.uid, "role": role]) { result, error in
                         if let error = error {
                             print("DEBUG: Error setting role for Google user: \(error.localizedDescription)")
@@ -189,12 +489,19 @@ class AuthManager: ObservableObject {
                             return
                         }
                         
-                        // Create user document in Firestore
-                        let userData = AppUser(id: firebaseUser.uid, email: email, name: name, role: role, isActive: true, streaks: 0)
+                        let userData = AppUser(
+                            id: firebaseUser.uid,
+                            email: email,
+                            name: name,
+                            role: role,
+                            isActive: true,
+                            streaks: 0,
+                            hasNotifiedFourDonations: false
+                        )
                         do {
                             try self.db.collection("users").document(firebaseUser.uid).setData(from: userData)
                             print("DEBUG: Created Google user document: \(userData)")
-                            self.user = userData // Update user to trigger redirect
+                            self.user = userData
                             completion(nil)
                         } catch {
                             print("DEBUG: Error saving Google user to Firestore: \(error.localizedDescription)")
@@ -205,7 +512,6 @@ class AuthManager: ObservableObject {
             }
         }
     }
-    
     func signOut() {
         do {
             try Auth.auth().signOut()
@@ -226,7 +532,70 @@ class AuthManager: ObservableObject {
 
 
 
-
+/*    func signInWithGoogle(idToken: String, accessToken: String, email: String, name: String, completion: @escaping (Error?) -> Void) {
+ let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+ 
+ Auth.auth().signIn(with: credential) { [weak self] result, error in
+     guard let self = self else {
+         completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+         return
+     }
+     
+     if let error = error {
+         print("DEBUG: Google Sign-In error: \(error.localizedDescription)")
+         completion(error)
+         return
+     }
+     
+     guard let firebaseUser = result?.user else {
+         print("DEBUG: Google Sign-In failed: No Firebase user")
+         completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Google Sign-In failed"]))
+         return
+     }
+     
+     // Check if user exists in Firestore
+     db.collection("users").document(firebaseUser.uid).getDocument { [weak self] snapshot, error in
+         guard let self = self else {
+             completion(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "AuthManager unavailable"]))
+             return
+         }
+         
+         if let error = error {
+             print("DEBUG: Error checking user existence: \(error.localizedDescription)")
+             completion(error)
+             return
+         }
+         
+         if snapshot?.exists == true {
+             // Existing user, fetch data via state change listener
+             print("DEBUG: Existing Google user, fetching data: \(firebaseUser.uid)")
+             completion(nil)
+         } else {
+             // New user, create with donor role
+             let role = "donor"
+             functions.httpsCallable("setUserRole").call(["userId": firebaseUser.uid, "role": role]) { result, error in
+                 if let error = error {
+                     print("DEBUG: Error setting role for Google user: \(error.localizedDescription)")
+                     completion(error)
+                     return
+                 }
+                 
+                 // Create user document in Firestore
+                 let userData = AppUser(id: firebaseUser.uid, email: email, name: name, role: role, isActive: true, streaks: 0,hasNotifiedFourDonations: false)
+                 do {
+                     try self.db.collection("users").document(firebaseUser.uid).setData(from: userData)
+                     print("DEBUG: Created Google user document: \(userData)")
+                     self.user = userData // Update user to trigger redirect
+                     completion(nil)
+                 } catch {
+                     print("DEBUG: Error saving Google user to Firestore: \(error.localizedDescription)")
+                     completion(error)
+                 }
+             }
+         }
+     }
+ }
+}*/
 
 
 

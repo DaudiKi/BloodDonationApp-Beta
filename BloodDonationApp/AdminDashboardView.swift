@@ -1,4 +1,1023 @@
-// Import SwiftUI for building the user interface and FirebaseFirestore for interacting with the Firestore database
+import SwiftUI
+import FirebaseFirestore
+
+struct AdminDashboardView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var users: [AppUser] = []
+    @State private var donations: [Donation] = []
+    @State private var hospitals: [hospital] = []
+    @State private var selectedTab = 0
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var togglingUserId: String?
+    @State private var showDonationForm = false
+    private let db = Firestore.firestore()
+    
+    private let deepRed = Color(red: 0.8, green: 0.1, blue: 0.1)
+    private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
+    private let lightRed = Color(red: 0.95, green: 0.8, blue: 0.8)
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                cream.edgesIgnoringSafeArea(.all)
+                
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        SegmentButton(title: "Users", isSelected: selectedTab == 0) {
+                            selectedTab = 0
+                        }
+                        SegmentButton(title: "Donations", isSelected: selectedTab == 1) {
+                            selectedTab = 1
+                        }
+                        SegmentButton(title: "Active Donors", isSelected: selectedTab == 2) {
+                            selectedTab = 2
+                        }
+                    }
+                    .background(deepRed)
+                    
+                    TabView(selection: $selectedTab) {
+                        usersListView.tag(0)
+                        donationsListView.tag(1)
+                        activeDonorsListView.tag(2)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    actionButtons()
+                }
+            }
+            .navigationTitle("Admin Dashboard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(deepRed, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        authManager.signOut()
+                    }) {
+                        Text("Logout")
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text(alertTitle), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
+            .sheet(isPresented: $showDonationForm) {
+                DonationFormView(authManager: authManager, users: users.filter { $0.role != "admin" }, hospitals: hospitals)
+            }
+            .onAppear {
+                fetchUsers()
+                fetchDonations()
+                fetchHospitals()
+            }
+        }
+    }
+    
+    private var usersListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(users) { user in
+                    userCardView(user)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private var activeDonorsListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(users.filter { $0.isActive && $0.role != "admin" }) { user in
+                    userCardView(user)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private func userCardView(_ user: AppUser) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.name)
+                        .font(.headline)
+                        .foregroundColor(.black)
+                    Text(user.email)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    HStack {
+                        Circle()
+                            .fill(user.isActive ? Color.green : Color.gray)
+                            .frame(width: 10, height: 10)
+                        Text(user.isActive ? "Active" : "Inactive")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                Button(action: {
+                    Task {
+                        await toggleUserStatus(user)
+                    }
+                }) {
+                    Text(togglingUserId == user.id ? "Toggling..." : (user.isActive ? "Disable" : "Enable"))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(user.isActive ? Color.red.opacity(0.2) : deepRed)
+                        .foregroundColor(user.isActive ? .red : .white)
+                        .cornerRadius(8)
+                }
+                .disabled(togglingUserId == user.id)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+    
+    private var donationsListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 15) {
+                ForEach(donations.filter { $0.status == "pending" }) { donation in
+                    donationCardView(donation)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private func donationCardView(_ donation: Donation) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Donor: \(users.first { $0.id == donation.donorId }?.name ?? donation.donorId)")
+                    .font(.headline)
+                    .foregroundColor(.black)
+                Spacer()
+                Text(donation.status.capitalized)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(lightRed)
+                    .foregroundColor(deepRed)
+                    .cornerRadius(6)
+            }
+            Text("Date: \(donation.date, format: .dateTime)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Text("Hospital: \(donation.hospital)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            if let hospital = hospitals.first(where: { $0.name == donation.hospital }) {
+                Text("Address: \(hospital.address)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            HStack(spacing: 12) {
+                Button(action: {
+                    Task {
+                        await approveDonation(donation)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark")
+                        Text("Approve")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(deepRed)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+                Button(action: {
+                    Task {
+                        await rejectDonation(donation)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "xmark")
+                        Text("Reject")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.gray.opacity(0.2))
+                    .foregroundColor(.black)
+                    .cornerRadius(8)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+    
+    private func actionButtons() -> some View {
+        HStack(spacing: 15) {
+            Button(action: {
+                showDonationForm = true
+            }) {
+                HStack {
+                    Image(systemName: "plus")
+                    Text("Log Donation")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(deepRed)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: -2)
+    }
+    
+    private func SegmentButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .fontWeight(.semibold)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background(isSelected ? cream : deepRed)
+                .foregroundColor(isSelected ? deepRed : cream)
+        }
+    }
+    
+    private func fetchUsers() {
+        db.collection("users").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching users: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch users: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            users = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let email = data["email"] as? String,
+                      let name = data["name"] as? String,
+                      let role = data["role"] as? String,
+                      let isActive = data["isActive"] as? Bool,
+                      let streaks = data["streaks"] as? Int,
+                      let hasNotifiedFourDonations = data["hasNotifiedFourDonations"] as? Bool else {
+                    print("Failed to decode user document \(document.documentID): \(data)")
+                    return nil
+                }
+                return AppUser(
+                    id: id,
+                    email: email,
+                    name: name,
+                    role: role,
+                    isActive: isActive,
+                    streaks: streaks,
+                    hasNotifiedFourDonations: hasNotifiedFourDonations
+                )
+            } ?? []
+            print("Fetched \(users.count) users")
+        }
+    }
+    
+    private func fetchDonations() {
+        db.collection("donations").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching donations: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch donations: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            donations = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let donorId = data["donorId"] as? String,
+                      let hospital = data["hospital"] as? String,
+                      let bloodType = data["bloodType"] as? String,
+                      let date = (data["date"] as? Timestamp)?.dateValue(),
+                      let status = data["status"] as? String else {
+                    print("Failed to decode donation document \(document.documentID): \(data)")
+                    return nil
+                }
+                return Donation(id: id, donorId: donorId, hospital: hospital, bloodType: bloodType, date: date, status: status)
+            } ?? []
+            print("Fetched \(donations.count) donations")
+        }
+    }
+    
+    private func fetchHospitals() {
+        db.collection("hospitals").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching hospitals: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch hospitals: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            hospitals = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let name = data["name"] as? String,
+                      let address = data["address"] as? String else {
+                    print("Failed to decode hospital document \(document.documentID): \(data)")
+                    return nil
+                }
+                return hospital(id: id, name: name, address: address)
+            } ?? []
+            print("Fetched \(hospitals.count) hospitals")
+        }
+    }
+    
+    private func toggleUserStatus(_ user: AppUser) async {
+        guard !user.id.isEmpty else {
+            alertTitle = "Error"
+            alertMessage = "Invalid user ID"
+            showAlert = true
+            print("Invalid user ID for toggling status")
+            return
+        }
+        
+        var currentUser: AppUser?
+        await MainActor.run {
+            currentUser = authManager.user
+        }
+        guard currentUser?.role == "admin" else {
+            alertTitle = "Error"
+            alertMessage = "You do not have permission to toggle user status"
+            showAlert = true
+            print("Non-admin attempted to toggle user status for ID: \(user.id)")
+            return
+        }
+        
+        guard user.id != currentUser?.id else {
+            alertTitle = "Error"
+            alertMessage = "You cannot toggle your own account status"
+            showAlert = true
+            print("Admin attempted to toggle their own status for ID: \(user.id)")
+            return
+        }
+        
+        do {
+            togglingUserId = user.id
+            let updateData: [String: Bool] = ["isActive": !user.isActive]
+            try await db.collection("users").document(user.id).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "User status \(user.isActive ? "disabled" : "enabled") successfully."
+            showAlert = true
+            print("Toggled user status for ID: \(user.id) to isActive: \(!user.isActive)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to toggle user status: \(error.localizedDescription)"
+            showAlert = true
+            print("Error toggling user status for ID: \(user.id), error: \(error.localizedDescription)")
+        }
+        
+        togglingUserId = nil
+    }
+    
+    private func approveDonation(_ donation: Donation) async {
+        let donationId = donation.id
+        if donationId.isEmpty {
+            alertTitle = "Error"
+            alertMessage = "Invalid donation ID"
+            showAlert = true
+            return
+        }
+        
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: Date())
+        guard let startOfYear = calendar.date(from: DateComponents(year: currentYear, month: 1, day: 1)),
+              let endOfYear = calendar.date(from: DateComponents(year: currentYear, month: 12, day: 31, hour: 23, minute: 59, second: 59)) else {
+            alertTitle = "Error"
+            alertMessage = "Failed to calculate year range for donation limit check"
+            showAlert = true
+            return
+        }
+        
+        do {
+            let snapshot = try await db.collection("donations")
+                .whereField("donorId", isEqualTo: donation.donorId)
+                .whereField("date", isGreaterThanOrEqualTo: Timestamp(date: startOfYear))
+                .whereField("date", isLessThanOrEqualTo: Timestamp(date: endOfYear))
+                .whereField("status", isEqualTo: "approved")
+                .getDocuments()
+            
+            let approvedCount = snapshot.documents.count
+            if approvedCount >= 4 {
+                alertTitle = "Cannot Approve"
+                alertMessage = "User has already reached the donation limit of 4 for \(currentYear)."
+                showAlert = true
+                return
+            }
+            
+            let updateData: [String: String] = ["status": "approved"]
+            try await db.collection("donations").document(donationId).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "Donation approved successfully."
+            showAlert = true
+            print("Approved donation ID: \(donationId) for user: \(donation.donorId)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to approve donation: \(error.localizedDescription)"
+            showAlert = true
+            print("Error approving donation ID: \(donationId), error: \(error.localizedDescription)")
+        }
+    }
+    
+    private func rejectDonation(_ donation: Donation) async {
+        let donationId = donation.id
+        if donationId.isEmpty {
+            alertTitle = "Error"
+            alertMessage = "Invalid donation ID"
+            showAlert = true
+            return
+        }
+        
+        do {
+            let updateData: [String: String] = ["status": "rejected"]
+            try await db.collection("donations").document(donationId).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "Donation rejected successfully."
+            showAlert = true
+            print("Rejected donation ID: \(donationId) for user: \(donation.donorId)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to reject donation: \(error.localizedDescription)"
+            showAlert = true
+            print("Error rejecting donation ID: \(donationId), error: \(error.localizedDescription)")
+        }
+    }
+}
+
+#Preview {
+    AdminDashboardView()
+        .environmentObject(AuthManager())
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*// File: AdminDashboardView.swift
+// Project: BloodDonationApp
+// Purpose: Admin dashboard for managing users, donations, and active donors
+// Created by Student1 on 28/04/2025
+
+import SwiftUI
+import FirebaseFirestore
+
+struct AdminDashboardView: View {
+    @EnvironmentObject var authManager: AuthManager
+    @State private var users: [AppUser] = []
+    @State private var donations: [Donation] = []
+    @State private var hospitals: [Hospital] = []
+    @State private var selectedTab = 0
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var togglingUserId: String?
+    @State private var showDonationForm = false
+    private let db = Firestore.firestore()
+    
+    private let deepRed = Color(red: 0.8, green: 0.1, blue: 0.1)
+    private let cream = Color(red: 0.98, green: 0.96, blue: 0.9)
+    private let lightRed = Color(red: 0.95, green: 0.8, blue: 0.8)
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                cream.edgesIgnoringSafeArea(.all)
+                
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        SegmentButton(title: "Users", isSelected: selectedTab == 0) {
+                            selectedTab = 0
+                        }
+                        SegmentButton(title: "Donations", isSelected: selectedTab == 1) {
+                            selectedTab = 1
+                        }
+                        SegmentButton(title: "Active Donors", isSelected: selectedTab == 2) {
+                            selectedTab = 2
+                        }
+                    }
+                    .background(deepRed)
+                    
+                    TabView(selection: $selectedTab) {
+                        usersListView.tag(0)
+                        donationsListView.tag(1)
+                        activeDonorsListView.tag(2)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    actionButtons()
+                }
+            }
+            .navigationTitle("Admin Dashboard")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(deepRed, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: {
+                        authManager.signOut()
+                    }) {
+                        Text("Logout")
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(title: Text(alertTitle), message: Text(alertMessage), dismissButton: .default(Text("OK")))
+            }
+            .sheet(isPresented: $showDonationForm) {
+                DonationFormView(authManager: authManager)
+            }
+            .onAppear {
+                fetchUsers()
+                fetchDonations()
+                fetchHospitals()
+            }
+        }
+    }
+    
+    private var usersListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(users) { user in
+                    userCardView(user)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private var activeDonorsListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(users.filter { $0.isActive && $0.role != "admin" }) { user in
+                    userCardView(user)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private func userCardView(_ user: AppUser) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.name)
+                        .font(.headline)
+                        .foregroundColor(.black)
+                    Text(user.email)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                    HStack {
+                        Circle()
+                            .fill(user.isActive ? Color.green : Color.gray)
+                            .frame(width: 10, height: 10)
+                        Text(user.isActive ? "Active" : "Inactive")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+                Button(action: {
+                    Task {
+                        await toggleUserStatus(user)
+                    }
+                }) {
+                    Text(togglingUserId == user.id ? "Toggling..." : (user.isActive ? "Disable" : "Enable"))
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(user.isActive ? Color.red.opacity(0.2) : deepRed)
+                        .foregroundColor(user.isActive ? .red : .white)
+                        .cornerRadius(8)
+                }
+                .disabled(togglingUserId == user.id)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+    
+    private var donationsListView: some View {
+        ScrollView {
+            LazyVStack(spacing: 15) {
+                ForEach(donations.filter { $0.status == "pending" }) { donation in
+                    donationCardView(donation)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .padding(.bottom)
+        }
+        .background(cream)
+    }
+    
+    private func donationCardView(_ donation: Donation) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Donor ID: \(donation.donorId)")
+                    .font(.headline)
+                    .foregroundColor(.black)
+                Spacer()
+                Text("Pending")
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(lightRed)
+                    .foregroundColor(deepRed)
+                    .cornerRadius(6)
+            }
+            Text("Date: \(donation.date, format: .dateTime)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Text("Hospital: \(donation.hospital)")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            if let hospital = hospitals.first(where: { $0.name == donation.hospital }) {
+                Text("Address: \(hospital.address)")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            HStack(spacing: 12) {
+                Button(action: {
+                    Task {
+                        await approveDonation(donation)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "checkmark")
+                        Text("Approve")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(deepRed)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+                Button(action: {
+                    Task {
+                        await rejectDonation(donation)
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "xmark")
+                        Text("Reject")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.gray.opacity(0.2))
+                    .foregroundColor(.black)
+                    .cornerRadius(8)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+    
+    private func actionButtons() -> some View {
+        HStack(spacing: 15) {
+            Button(action: {
+                showDonationForm = true
+            }) {
+                HStack {
+                    Image(systemName: "plus")
+                    Text("Log Donation")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(deepRed)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+        }
+        .padding()
+        .background(Color.white)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: -2)
+    }
+    
+    private func SegmentButton(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .fontWeight(.semibold)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background(isSelected ? cream : deepRed)
+                .foregroundColor(isSelected ? deepRed : cream)
+        }
+    }
+    
+    private func fetchUsers() {
+        db.collection("users").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching users: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch users: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            users = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let email = data["email"] as? String,
+                      let name = data["name"] as? String,
+                      let role = data["role"] as? String,
+                      let isActive = data["isActive"] as? Bool,
+                      let streaks = data["streaks"] as? Int,
+                      let hasNotifiedFourDonations = data["hasNotifiedFourDonations"] as? Bool else {
+                    print("Failed to decode user document \(document.documentID): \(data)")
+                    return nil
+                }
+                return AppUser(
+                    id: id,
+                    email: email,
+                    name: name,
+                    role: role,
+                    isActive: isActive,
+                    streaks: streaks,
+                    hasNotifiedFourDonations: hasNotifiedFourDonations
+                )
+            } ?? []
+            print("Fetched \(users.count) users")
+        }
+    }
+    
+    private func fetchDonations() {
+        db.collection("donations").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching donations: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch donations: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            donations = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let donorId = data["donorId"] as? String,
+                      let hospital = data["hospital"] as? String,
+                      let bloodType = data["bloodType"] as? String,
+                      let date = (data["date"] as? Timestamp)?.dateValue(),
+                      let status = data["status"] as? String else {
+                    print("Failed to decode donation document \(document.documentID): \(data)")
+                    return nil
+                }
+                return Donation(id: id, donorId: donorId, hospital: hospital, bloodType: bloodType, date: date, status: status)
+            } ?? []
+            print("Fetched \(donations.count) donations")
+        }
+    }
+    
+    private func fetchHospitals() {
+        db.collection("hospitals").addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("Error fetching hospitals: \(error)")
+                alertTitle = "Error"
+                alertMessage = "Failed to fetch hospitals: \(error.localizedDescription)"
+                showAlert = true
+                return
+            }
+            hospitals = snapshot?.documents.compactMap { document in
+                let data = document.data()
+                guard let id = data["id"] as? String,
+                      let name = data["name"] as? String,
+                      let address = data["address"] as? String else {
+                    print("Failed to decode hospital document \(document.documentID): \(data)")
+                    return nil
+                }
+                return Hospital(id: id, name: name, address: address)
+            } ?? []
+            print("Fetched \(hospitals.count) hospitals")
+        }
+    }
+    
+    private func toggleUserStatus(_ user: AppUser) async {
+        guard !user.id.isEmpty else {
+            alertTitle = "Error"
+            alertMessage = "Invalid user ID"
+            showAlert = true
+            print("Invalid user ID for toggling status")
+            return
+        }
+        
+        var currentUser: AppUser?
+        await MainActor.run {
+            currentUser = authManager.user
+        }
+        guard currentUser?.role == "admin" else {
+            alertTitle = "Error"
+            alertMessage = "You do not have permission to toggle user status"
+            showAlert = true
+            print("Non-admin attempted to toggle user status for ID: \(user.id)")
+            return
+        }
+        
+        guard user.id != currentUser?.id else {
+            alertTitle = "Error"
+            alertMessage = "You cannot toggle your own account status"
+            showAlert = true
+            print("Admin attempted to toggle their own status for ID: \(user.id)")
+            return
+        }
+        
+        do {
+            togglingUserId = user.id
+            let updateData: [String: Bool] = ["isActive": !user.isActive]
+            try await db.collection("users").document(user.id).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "User status \(user.isActive ? "disabled" : "enabled") successfully."
+            showAlert = true
+            print("Toggled user status for ID: \(user.id) to isActive: \(!user.isActive)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to toggle user status: \(error.localizedDescription)"
+            showAlert = true
+            print("Error toggling user status for ID: \(user.id), error: \(error.localizedDescription)")
+        }
+        
+        togglingUserId = nil
+    }
+    
+    private func approveDonation(_ donation: Donation) async {
+        let donationId = donation.id
+        if donationId.isEmpty {
+            alertTitle = "Error"
+            alertMessage = "Invalid donation ID"
+            showAlert = true
+            return
+        }
+        
+        let calendar = Calendar.current
+        let currentYear = calendar.component(.year, from: Date())
+        guard let startOfYear = calendar.date(from: DateComponents(year: currentYear, month: 1, day: 1)),
+              let endOfYear = calendar.date(from: DateComponents(year: currentYear, month: 12, day: 31, hour: 23, minute: 59, second: 59)) else {
+            alertTitle = "Error"
+            alertMessage = "Failed to calculate year range for donation limit check"
+            showAlert = true
+            return
+        }
+        
+        do {
+            let snapshot = try await db.collection("donations")
+                .whereField("donorId", isEqualTo: donation.donorId)
+                .whereField("date", isGreaterThanOrEqualTo: Timestamp(date: startOfYear))
+                .whereField("date", isLessThanOrEqualTo: Timestamp(date: endOfYear))
+                .whereField("status", isEqualTo: "approved")
+                .getDocuments()
+            
+            let approvedCount = snapshot.documents.count
+            if approvedCount >= 4 {
+                alertTitle = "Cannot Approve"
+                alertMessage = "User has already reached the donation limit of 4 for \(currentYear)."
+                showAlert = true
+                return
+            }
+            
+            let updateData: [String: String] = ["status": "approved"]
+            try await db.collection("donations").document(donationId).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "Donation approved successfully."
+            showAlert = true
+            print("Approved donation ID: \(donationId) for user: \(donation.donorId)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to approve donation: \(error.localizedDescription)"
+            showAlert = true
+            print("Error approving donation ID: \(donationId), error: \(error.localizedDescription)")
+        }
+    }
+    
+    private func rejectDonation(_ donation: Donation) async {
+        let donationId = donation.id
+        if donationId.isEmpty {
+            alertTitle = "Error"
+            alertMessage = "Invalid donation ID"
+            showAlert = true
+            return
+        }
+        
+        do {
+            let updateData: [String: String] = ["status": "rejected"]
+            try await db.collection("donations").document(donationId).updateData(updateData)
+            alertTitle = "Success"
+            alertMessage = "Donation rejected successfully."
+            showAlert = true
+            print("Rejected donation ID: \(donationId) for user: \(donation.donorId)")
+        } catch {
+            alertTitle = "Error"
+            alertMessage = "Failed to reject donation: \(error.localizedDescription)"
+            showAlert = true
+            print("Error rejecting donation ID: \(donationId), error: \(error.localizedDescription)")
+        }
+    }
+}
+
+#Preview {
+    AdminDashboardView()
+        .environmentObject(AuthManager())
+}*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*// Import SwiftUI for building the user interface and FirebaseFirestore for interacting with the Firestore database
 import SwiftUI
 import FirebaseFirestore
 
@@ -534,7 +1553,7 @@ struct AdminDashboardView: View {
 #Preview {
     AdminDashboardView()
         .environmentObject(AuthManager())
-}
+}*/
 
 
 
