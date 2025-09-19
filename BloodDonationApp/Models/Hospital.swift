@@ -1,4 +1,4 @@
-/*//
+//
 //  Hospital.swift
 //  BloodDonationApp
 //
@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct Hospital: Identifiable, Codable, Hashable {
+struct hospital:  Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let address: String
-}*/
+}

@@ -7,7 +7,7 @@ import Foundation
 import FirebaseFirestore
 
 // Define the Donation struct to represent a blood donation record in the application
-struct Donation: Identifiable, Codable {
+struct Donation: Identifiable, Codable, Hashable {
     // Unique identifier for the donation, used to distinguish donation records in the database and UI
     let id: String
     // Identifier of the donor who made the donation, linking the donation to a specific user
