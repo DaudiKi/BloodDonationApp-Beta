@@ -84,5 +84,5 @@ fastlane/*.env
 
 iOSInjectionProject/
 
-GoogleService-Info.plist
+BloodDonationApp/GoogleService-Info.plist
 
