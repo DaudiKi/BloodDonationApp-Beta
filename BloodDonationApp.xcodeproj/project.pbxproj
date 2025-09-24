@@ -19,9 +19,22 @@
 		E74BA6572DBF8E8B00A4511C /* BloodDonationApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BloodDonationApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E76C39002E83E547001C87C3 /* Exceptions for "BloodDonationApp" folder in "BloodDonationApp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E74BA6562DBF8E8B00A4511C /* BloodDonationApp */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E74BA6592DBF8E8B00A4511C /* BloodDonationApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E76C39002E83E547001C87C3 /* Exceptions for "BloodDonationApp" folder in "BloodDonationApp" target */,
+			);
 			path = BloodDonationApp;
 			sourceTree = "<group>";
 		};
